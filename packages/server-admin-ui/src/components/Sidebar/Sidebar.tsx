@@ -1,5 +1,12 @@
-import React, { useMemo, useCallback, MouseEvent, ReactNode } from 'react'
-import { NavLink, Location } from 'react-router-dom'
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  MouseEvent,
+  ReactNode
+} from 'react'
+import { NavLink, Location, useNavigate } from 'react-router-dom'
 import Badge from 'react-bootstrap/Badge'
 import Nav from 'react-bootstrap/Nav'
 import {
@@ -46,6 +53,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ location }: SidebarProps) {
+  const navigate = useNavigate()
   const appStore = useAppStore()
   const accessRequests = useAccessRequests()
   const devices = useDevices()
@@ -275,21 +283,81 @@ export default function Sidebar({ location }: SidebarProps) {
     return result
   }, [appStore, accessRequests, expiredDeviceCount, loginStatus, plugins])
 
-  const handleClick = useCallback((e: MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault()
-    ;(e.target as HTMLElement).parentElement?.classList.toggle('open')
-  }, [])
+  const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(
+    () => new Set<string>()
+  )
+
+  // Auto-open dropdown matching the current path (on initial load and navigation)
+  useEffect(() => {
+    for (const item of items) {
+      if (item.children?.length && item.url) {
+        const hasActiveChild = item.children.some(
+          (child) => child.url && location.pathname.indexOf(child.url) > -1
+        )
+        if (hasActiveChild) {
+          setOpenDropdowns((prev) => {
+            if (prev.has(item.url!)) return prev
+            const next = new Set(prev)
+            next.add(item.url!)
+            return next
+          })
+        }
+      }
+    }
+  }, [location.pathname, items])
+
+  const handleClick = useCallback(
+    (item: NavItemData) => (e: MouseEvent<HTMLAnchorElement>) => {
+      e.preventDefault()
+      const itemUrl = item.url || ''
+      setOpenDropdowns((prev) => {
+        const next = new Set(prev)
+        const wasOpen = next.has(itemUrl)
+        if (wasOpen) {
+          next.delete(itemUrl)
+        } else {
+          next.add(itemUrl)
+        }
+        return next
+      })
+      const wasOpen = openDropdowns.has(itemUrl)
+      if (!wasOpen && item.children?.length && item.url) {
+        const storageKey = `admin.v1.sidebar.lastPage.${item.url}`
+        const lastPage = localStorage.getItem(storageKey)
+        const target =
+          lastPage && item.children.some((c) => c.url === lastPage)
+            ? lastPage
+            : item.children[0].url
+        if (target) {
+          navigate(target)
+        }
+      }
+    },
+    [navigate, openDropdowns]
+  )
+
+  useEffect(() => {
+    for (const item of items) {
+      if (item.children?.length && item.url) {
+        const matchedChild = item.children.find(
+          (child) => child.url && location.pathname.indexOf(child.url) > -1
+        )
+        if (matchedChild?.url) {
+          localStorage.setItem(
+            `admin.v1.sidebar.lastPage.${item.url}`,
+            matchedChild.url
+          )
+        }
+      }
+    }
+  }, [location.pathname, items])
 
   const activeRoute = useCallback(
-    (routeName: string, children?: NavItemData[]) => {
-      const isActive = children?.length
-        ? children.some(
-            (child) => child.url && location.pathname.indexOf(child.url) > -1
-          )
-        : location.pathname.indexOf(routeName) > -1
-      return isActive ? 'nav-item nav-dropdown open' : 'nav-item nav-dropdown'
+    (routeName: string) => {
+      const isOpen = openDropdowns.has(routeName)
+      return isOpen ? 'nav-item nav-dropdown open' : 'nav-item nav-dropdown'
     },
-    [location.pathname]
+    [openDropdowns]
   )
 
   const renderBadge = (badgeData?: BadgeData | null): ReactNode => {
@@ -400,11 +468,11 @@ export default function Sidebar({ location }: SidebarProps) {
 
   const navDropdown = (item: NavItemData, key: number): ReactNode => {
     return (
-      <li key={key} className={activeRoute(item.url || '', item.children)}>
+      <li key={key} className={activeRoute(item.url || '')}>
         <a
           className="nav-link nav-dropdown-toggle"
           href="#"
-          onClick={handleClick}
+          onClick={handleClick(item)}
         >
           {renderIcon(item.icon)}
           {item.name}
